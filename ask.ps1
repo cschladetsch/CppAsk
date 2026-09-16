@@ -4,7 +4,7 @@
  
 .DESCRIPTION
     Sends a question to Ollama's /api/chat (default) or a running cppcoder
-    --serve instance.  Config is loaded from ~/.ask.json; any parameter
+    --serve instance.  Config is loaded from ~/.config/ask/config.json; any parameter
     passed on the command line overrides the config for that run.
  
 .PARAMETER Question
@@ -31,7 +31,7 @@
     Collect full reply before printing.
  
 .PARAMETER SetModel
-    Persist a new default model to ~/.ask.json, then exit.
+    Persist a new default model to ~/.config/ask/config.json, then exit.
     Example: ask -SetModel qwen2.5-coder:7b
  
 .EXAMPLE
@@ -58,7 +58,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
  
-# ── Load ~/.ask.json ──────────────────────────────────────────────────────────
+# ── Load ~/.config/ask/config.json ──────────────────────────────────────────────────────────
  
 $configPath = Join-Path $HOME ".ask.json"
  
@@ -73,7 +73,7 @@ $defaults = @{
 if (Test-Path $configPath) {
     try {
         $saved = Get-Content $configPath -Raw | ConvertFrom-Json
-        foreach ($key in $defaults.Keys) {
+        foreach ($key in @($defaults.Keys)) {
             if ($null -ne $saved.$key) { $defaults[$key] = $saved.$key }
         }
     } catch {
@@ -85,6 +85,8 @@ if (Test-Path $configPath) {
  
 if ($SetModel -ne "") {
     $defaults["model"] = $SetModel
+    $cfgDir = Split-Path $configPath -Parent
+    if (-not (Test-Path $cfgDir)) { New-Item $cfgDir -ItemType Directory | Out-Null }
     $defaults | ConvertTo-Json | Set-Content $configPath
     Write-Host "Default model set to '$SetModel' in $configPath" -ForegroundColor Green
     return
