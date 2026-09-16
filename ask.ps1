@@ -1,67 +1,67 @@
 <#
 .SYNOPSIS
     Ask the local LLM a one-shot question, streaming the reply to stdout.
- 
+
 .DESCRIPTION
     Sends a question to Ollama's /api/chat (default) or a running cppcoder
     --serve instance.  Config is loaded from ~/.config/ask/config.json; any parameter
     passed on the command line overrides the config for that run.
- 
+
 .PARAMETER Question
     The question to ask.  Quotes optional -- unquoted words are joined.
     Can also be piped in.
- 
+
 .PARAMETER Model
     Ollama model tag.  Overrides config.
- 
+
 .PARAMETER OllamaHost
     Ollama hostname.  Overrides config.
- 
+
 .PARAMETER Port
     Ollama port.  Overrides config.
- 
+
 .PARAMETER Direct
     Talk straight to Ollama (default: true).  -Direct:$false routes via
     cppcoder --serve on port 8765.
- 
+
 .PARAMETER System
     System prompt prepended to the conversation.  Overrides config.
- 
+
 .PARAMETER NoStream
     Collect full reply before printing.
- 
+
 .PARAMETER SetModel
     Persist a new default model to ~/.config/ask/config.json, then exit.
     Example: ask -SetModel qwen2.5-coder:7b
- 
+
 .EXAMPLE
     ask what is 1+2
     ask explain CRTP in modern C++
     ask what does PatchApplier do -Model codellama:7b
     ask -SetModel dolphin-8b:latest
 #>
- 
+
 [CmdletBinding()]
 param(
     [Parameter(Position = 0, ValueFromPipeline = $true, ValueFromRemainingArguments = $true)]
     [string[]] $Question,
- 
+
     [string] $Model       = "",
     [string] $OllamaHost  = "",
     [int]    $Port        = 0,
     [switch] $Direct      = $true,
     [string] $System      = "",
     [switch] $NoStream,
+    [switch] $Pretty = $true,
     [string] $SetModel    = ""
 )
- 
-Set-StrictMode -Version Latest
+
 $ErrorActionPreference = "Stop"
- 
+
 # ── Load ~/.config/ask/config.json ──────────────────────────────────────────────────────────
- 
+
 $configPath = Join-Path $HOME ".ask.json"
- 
+
 $defaults = @{
     model      = "dolphin-8b:latest"
     host       = "127.0.0.1"
@@ -69,7 +69,7 @@ $defaults = @{
     port_serve  = 8765
     system     = ""
 }
- 
+
 if (Test-Path $configPath) {
     try {
         $saved = Get-Content $configPath -Raw | ConvertFrom-Json
@@ -80,9 +80,9 @@ if (Test-Path $configPath) {
         Write-Warning "Could not parse ${configPath}: $_"
     }
 }
- 
+
 # ── Handle -SetModel ──────────────────────────────────────────────────────────
- 
+
 if ($SetModel -ne "") {
     $defaults["model"] = $SetModel
     $cfgDir = Split-Path $configPath -Parent
@@ -91,20 +91,20 @@ if ($SetModel -ne "") {
     Write-Host "Default model set to '$SetModel' in $configPath" -ForegroundColor Green
     return
 }
- 
+
 # ── Require a question ────────────────────────────────────────────────────────
- 
+
 if (-not $Question) {
     Write-Error "No question provided. Usage: ask what is the rule of five"
     exit 1
 }
- 
+
 # ── Resolve effective settings (CLI overrides config) ─────────────────────────
- 
+
 $effectiveModel  = if ($Model      -ne "") { $Model     } else { $defaults["model"]  }
 $effectiveHost   = if ($OllamaHost -ne "") { $OllamaHost} else { $defaults["host"]   }
 $effectiveSystem = if ($System     -ne "") { $System    } else { $defaults["system"] }
- 
+
 $effectivePort = if ($Port -ne 0) {
     $Port
 } elseif ($Direct) {
@@ -112,36 +112,59 @@ $effectivePort = if ($Port -ne 0) {
 } else {
     $defaults["port_serve"]
 }
- 
-$url = "http://${effectiveHost}:${effectivePort}/api/chat"
- 
-# ── Build request ─────────────────────────────────────────────────────────────
- 
-$questionText = $Question -join " "
- 
-$messages = @()
-if ($effectiveSystem -ne "") {
-    $messages += @{ role = "system"; content = $effectiveSystem }
+
+$baseUrl = "http://${effectiveHost}:${effectivePort}"
+
+# ── Detect whether model supports /api/chat or needs /api/generate ────────────
+
+$useChat = $true
+try {
+    $tagsResp = Invoke-RestMethod "$baseUrl/api/tags" -ErrorAction Stop
+    $modelInfo = $tagsResp.models | Where-Object { $_.name -eq $effectiveModel } | Select-Object -First 1
+    if ($modelInfo -and $modelInfo.capabilities -notcontains "chat") {
+        $useChat = $false
+    }
+} catch {
+    # Can't reach tags endpoint -- assume chat, let it fail naturally
 }
-$messages += @{ role = "user"; content = $questionText }
- 
-$body = @{
-    model    = $effectiveModel
-    messages = $messages
-    stream   = -not $NoStream.IsPresent
-} | ConvertTo-Json -Depth 5 -Compress
- 
+
+$url = if ($useChat) { "$baseUrl/api/chat" } else { "$baseUrl/api/generate" }
+
+# ── Build request ─────────────────────────────────────────────────────────────
+
+$questionText = $Question -join " "
+
+if ($useChat) {
+    $messages = @()
+    if ($effectiveSystem -ne "") {
+        $messages += @{ role = "system"; content = $effectiveSystem }
+    }
+    $messages += @{ role = "user"; content = $questionText }
+    $body = @{
+        model    = $effectiveModel
+        messages = $messages
+        stream   = -not $NoStream.IsPresent
+    } | ConvertTo-Json -Depth 5 -Compress
+} else {
+    $prompt = if ($effectiveSystem -ne "") { "$effectiveSystem`n$questionText" } else { $questionText }
+    $body = @{
+        model  = $effectiveModel
+        prompt = $prompt
+        stream = -not $NoStream.IsPresent
+    } | ConvertTo-Json -Depth 5 -Compress
+}
+
 # ── Send ──────────────────────────────────────────────────────────────────────
- 
+
 try {
     $req = [System.Net.HttpWebRequest]::Create($url)
     $req.Method      = "POST"
     $req.ContentType = "application/json"
     $req.Timeout     = [System.Threading.Timeout]::Infinite
- 
+
     $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
     $req.ContentLength = $bodyBytes.Length
- 
+
     $s = $req.GetRequestStream()
     $s.Write($bodyBytes, 0, $bodyBytes.Length)
     $s.Close()
@@ -150,40 +173,54 @@ try {
     Write-Error "Could not connect to ${ep}`n$($_.Exception.Message)"
     exit 1
 }
- 
+
 # ── Stream response ───────────────────────────────────────────────────────────
- 
+
 try {
     $response = $req.GetResponse()
     $reader   = [System.IO.StreamReader]::new($response.GetResponseStream())
- 
-    if ($NoStream) {
-        $raw = $reader.ReadToEnd()
-        $obj = $raw | ConvertFrom-Json -ErrorAction SilentlyContinue
-        if ($obj -and $obj.message -and $obj.message.content) {
-            Write-Host $obj.message.content
+
+    $collected = [System.Text.StringBuilder]::new()
+
+    if ($NoStream -or $Pretty) {
+        if ($NoStream) {
+            $raw = $reader.ReadToEnd()
+            $obj = $raw | ConvertFrom-Json -ErrorAction SilentlyContinue
+            $text = if ($null -ne $obj.PSObject.Properties["message"]) { $obj.message.content } elseif ($null -ne $obj.PSObject.Properties["response"]) { $obj.response } else { $raw }
+            [void]$collected.Append($text)
         } else {
-            Write-Host $raw
+            while (-not $reader.EndOfStream) {
+                $line = $reader.ReadLine()
+                if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                $obj = $line | ConvertFrom-Json -ErrorAction SilentlyContinue
+                if (-not $obj) { continue }
+                $token = if ($null -ne $obj.PSObject.Properties["message"]) { $obj.message.content } else { $obj.response }
+                if ($token) { [void]$collected.Append($token) }
+                if ($obj.done -eq $true) { break }
+            }
+        }
+        $fullText = $collected.ToString()
+        if ($Pretty -and (Get-Command bat -ErrorAction SilentlyContinue)) {
+            $tmp = [System.IO.Path]::GetTempFileName() + ".md"
+            [System.IO.File]::WriteAllText($tmp, $fullText)
+            bat --language=markdown --style=plain --color=always --paging=never $tmp
+            Remove-Item $tmp -ErrorAction SilentlyContinue
+        } else {
+            if ($Pretty) { Write-Warning "bat not found -- install with: winget install sharkdp.bat" }
+            Write-Host $fullText
         }
     } else {
         while (-not $reader.EndOfStream) {
             $line = $reader.ReadLine()
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
- 
             $obj = $line | ConvertFrom-Json -ErrorAction SilentlyContinue
             if (-not $obj) { continue }
- 
-            if ($obj.message -and $obj.message.content) {
-                Write-Host -NoNewline $obj.message.content
-            }
- 
-            if ($obj.done -eq $true) {
-                Write-Host ""
-                break
-            }
+            $token = if ($null -ne $obj.PSObject.Properties["message"]) { $obj.message.content } else { $obj.response }
+            if ($token) { Write-Host -NoNewline $token }
+            if ($obj.done -eq $true) { Write-Host ""; break }
         }
     }
- 
+
     $reader.Close()
     $response.Close()
 } catch [System.Net.WebException] {
