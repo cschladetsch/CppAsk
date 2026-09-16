@@ -1,5 +1,3 @@
-gh repo create CppAsk --public --source . --remote origin --push
-gh repo create CppAsk --public --source . --remote origin --push
 # CppAsk
 
 A minimal PowerShell CLI for asking your local LLM a question from any terminal, without quotes, without a browser, without friction.
