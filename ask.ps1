@@ -53,10 +53,86 @@ param(
     [string] $System      = "",
     [switch] $NoStream,
     [switch] $Pretty = $true,
+    [switch] $NoColor,
     [string] $SetModel    = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+# ── Markdown renderer (no external tools) ─────────────────────────────────────
+
+function Write-Markdown([string]$text) {
+    $ESC = [char]27
+    $reset   = "$ESC[0m"
+    $bold    = "$ESC[1m"
+    $dim     = "$ESC[2m"
+    $cyan    = "$ESC[96m"
+    $yellow  = "$ESC[93m"
+    $green   = "$ESC[92m"
+    $magenta = "$ESC[95m"
+
+    $inCode = $false
+    $codeLang = ""
+
+    foreach ($line in $text -split "`n") {
+        if ($line -match '^```(.*)$') {
+            if ($inCode) {
+                $inCode = $false
+                Write-Host "${reset}"
+            } else {
+                $inCode = $true
+                $codeLang = $Matches[1].Trim()
+                Write-Host "${dim}${codeLang}${reset}" -ForegroundColor DarkGray
+            }
+            continue
+        }
+
+        if ($inCode) {
+            Write-Host "${green}${line}${reset}"
+            continue
+        }
+
+        # Headers
+        if ($line -match '^(#{1,6})\s+(.*)') {
+            $level = $Matches[1].Length
+            $heading = $Matches[2]
+            $colour = switch ($level) {
+                1 { $cyan }
+                2 { $yellow }
+                default { $magenta }
+            }
+            Write-Host "${bold}${colour}${heading}${reset}"
+            continue
+        }
+
+        # Horizontal rule
+        if ($line -match '^---+$') {
+            Write-Host "${dim}$('─' * 60)${reset}"
+            continue
+        }
+
+        # Inline: bold, italic, inline code -- simple regex replace with ANSI
+        $out = $line
+        $out = $out -replace '`([^`]+)`',           "${green}`$1${reset}"
+        $out = $out -replace '\*\*([^*]+)\*\*',      "${bold}`$1${reset}"
+        $out = $out -replace '\*([^*]+)\*',           "${dim}`$1${reset}"
+
+        # Bullet points
+        if ($out -match '^\s*[-*]\s+(.*)') {
+            Write-Host "  ${yellow}•${reset} $($out -replace '^\s*[-*]\s+','')"
+            continue
+        }
+
+        # Numbered list
+        if ($out -match '^\s*(\d+)\.\s+(.*)') {
+            Write-Host "  ${yellow}$($Matches[1]).${reset} $($Matches[2])"
+            continue
+        }
+
+        Write-Host $out
+    }
+    Write-Host $reset -NoNewline
+}
 
 # ── Load ~/.config/ask/config.json ──────────────────────────────────────────────────────────
 
@@ -200,13 +276,12 @@ try {
             }
         }
         $fullText = $collected.ToString()
-        if ($Pretty -and (Get-Command bat -ErrorAction SilentlyContinue)) {
+        if ($Pretty -and -not $NoColor) {
             $tmp = [System.IO.Path]::GetTempFileName() + ".md"
             [System.IO.File]::WriteAllText($tmp, $fullText)
             bat --language=markdown --style=plain --color=always --paging=never $tmp
             Remove-Item $tmp -ErrorAction SilentlyContinue
         } else {
-            if ($Pretty) { Write-Warning "bat not found -- install with: winget install sharkdp.bat" }
             Write-Host $fullText
         }
     } else {
