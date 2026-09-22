@@ -45,6 +45,9 @@
 .PARAMETER ClearHistory
     Wipe conversation history and exit without asking anything.
 
+.PARAMETER Models
+    List models available on the Ollama server, then exit.
+
 .EXAMPLE
     ask what is 1+2
     ask explain CRTP in modern C++
@@ -68,7 +71,8 @@ param(
     [string] $SetModel    = "",
     [switch] $NewChat,
     [switch] $NoHistory,
-    [switch] $ClearHistory
+    [switch] $ClearHistory,
+    [switch] $Models
 )
 
 $ErrorActionPreference = "Stop"
@@ -218,6 +222,33 @@ if ($SetModel -ne "") {
     if (-not (Test-Path $cfgDir)) { New-Item $cfgDir -ItemType Directory | Out-Null }
     $defaults | ConvertTo-Json | Set-Content $configPath
     Write-Host "Default model set to '$SetModel' in $configPath" -ForegroundColor Green
+    return
+}
+
+# ── Handle -Models ─────────────────────────────────────────────────────────────
+
+if ($Models) {
+    $listHost = if ($OllamaHost -ne "") { $OllamaHost } else { $defaults["host"] }
+    $listPort = if ($Port -ne 0) { $Port } elseif ($Direct) { $defaults["port_direct"] } else { $defaults["port_serve"] }
+    $listUrl  = "http://${listHost}:${listPort}/api/tags"
+    try {
+        $tagsResp = Invoke-RestMethod $listUrl -ErrorAction Stop
+        if (-not $tagsResp.models -or $tagsResp.models.Count -eq 0) {
+            Write-Host "No models found at $listUrl" -ForegroundColor Yellow
+            return
+        }
+        $current = $defaults["model"]
+        foreach ($m in $tagsResp.models | Sort-Object name) {
+            $marker = if ($m.name -eq $current) { "*" } else { " " }
+            $size = if ($m.size) { " ({0:N1} GB)" -f ($m.size / 1GB) } else { "" }
+            Write-Host "$marker $($m.name)$size"
+        }
+        Write-Host ""
+        Write-Host "* = current default (change with: ask -SetModel <name>)" -ForegroundColor DarkGray
+    } catch {
+        Write-Error "Could not reach $listUrl`n$($_.Exception.Message)"
+        exit 1
+    }
     return
 }
 

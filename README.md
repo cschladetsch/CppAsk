@@ -161,6 +161,7 @@ ask explain templates -NoStream
 | `-NewChat`    | off                  | Clear history, then start a fresh thread with this question |
 | `-NoHistory`  | off                  | One-shot -- don't read or write history for this call     |
 | `-ClearHistory` |                    | Wipe history and exit, without asking anything            |
+| `-Models`     |                      | List models available on the Ollama server, then exit    |
 
 ---
 
@@ -196,6 +197,7 @@ ask now show an example        # remembers the previous question
 ask -NewChat what is CRTP      # starts a fresh thread
 ask -NoHistory what is 1+1     # true one-shot, ignores/skips history entirely
 ask -ClearHistory              # wipe the thread, don't ask anything
+ask -Models                    # list models on the server (* marks the default)
 ```
 
 ---
