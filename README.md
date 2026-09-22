@@ -5,7 +5,7 @@ A minimal PowerShell CLI for asking your local LLM a question from any terminal,
 Built on top of [CppLocalLlmCodeAssist](https://github.com/cschladetsch/CppLocalLlmCodeAssist) and [Ollama](https://ollama.com).
 
 ## Demo
-![Demo](resources.Untitled.png "Demo")
+![Demo](resources/Untitled.png "Demo")
 
 📖 [Docs & diagrams](https://cschladetsch.github.io/CppAsk/)
 
