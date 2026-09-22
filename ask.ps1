@@ -374,10 +374,15 @@ try {
         }
         $fullText = $collected.ToString()
         if ($Pretty -and -not $NoColor) {
-            $tmp = [System.IO.Path]::GetTempFileName() + ".md"
-            [System.IO.File]::WriteAllText($tmp, $fullText)
-            bat --language=markdown --style=plain --color=always --paging=never $tmp
-            Remove-Item $tmp -ErrorAction SilentlyContinue
+            $batCmd = Get-Command bat -ErrorAction SilentlyContinue
+            if ($batCmd) {
+                $tmp = [System.IO.Path]::GetTempFileName() + ".md"
+                [System.IO.File]::WriteAllText($tmp, $fullText)
+                bat --language=markdown --style=plain --color=always --paging=never $tmp
+                Remove-Item $tmp -ErrorAction SilentlyContinue
+            } else {
+                Write-Markdown $fullText
+            }
         } else {
             Write-Host $fullText
         }
