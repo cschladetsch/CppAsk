@@ -1,0 +1,8 @@
+title: CppAsk
+description: A minimal PowerShell CLI for asking your local LLM a question from any terminal
+theme: null
+plugins: []
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge

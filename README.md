@@ -4,6 +4,8 @@ A minimal PowerShell CLI for asking your local LLM a question from any terminal,
 
 Built on top of [CppLocalLlmCodeAssist](https://github.com/cschladetsch/CppLocalLlmCodeAssist) and [Ollama](https://ollama.com).
 
+📖 [Docs & diagrams](https://cschladetsch.github.io/CppAsk/)
+
 ```powershell
 ask what is the rule of five in C++23
 ask explain CRTP -Model qwen2.5-coder:7b
