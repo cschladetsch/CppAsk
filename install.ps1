@@ -97,7 +97,7 @@ if (-not (Test-Path $PROFILE))    { New-Item $PROFILE    -ItemType File      | O
 $marker = "# CppAsk"
 if (Select-String -Path $PROFILE -Pattern ([regex]::Escape($marker)) -Quiet) {
     Write-Host "  Profile already has ask entry." -ForegroundColor DarkGray
-} elseif (Prompt-YN "  Add 'ask' alias to $PROFILE?") {
+} elseif (Prompt-YN "  Add 'ask' alias to ${PROFILE}?") {
     $snippet = @"
  
 $marker
