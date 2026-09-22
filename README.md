@@ -158,6 +158,9 @@ ask explain templates -NoStream
 | `-System`     | from config          | System prompt prepended to every request                 |
 | `-NoStream`   | off                  | Buffer full reply before printing                        |
 | `-SetModel`   |                      | Persist a new default model to config, then exit         |
+| `-NewChat`    | off                  | Clear history, then start a fresh thread with this question |
+| `-NoHistory`  | off                  | One-shot -- don't read or write history for this call     |
+| `-ClearHistory` |                    | Wipe history and exit, without asking anything            |
 
 ---
 
@@ -176,6 +179,24 @@ ask explain templates -NoStream
 ```
 
 CLI parameters always override config for that run.
+
+---
+
+## Conversation history
+
+By default, `ask` remembers the conversation. Each call appends your question
+and the model's reply to `~/.ask_conversation_state.json`, and prepends
+everything from that file (capped at the last 20 exchanges) to the next
+request -- so follow-ups like `ask and what about X` actually have the prior
+turns as context, same as a chat UI.
+
+```powershell
+ask what is CRTP
+ask now show an example        # remembers the previous question
+ask -NewChat what is CRTP      # starts a fresh thread
+ask -NoHistory what is 1+1     # true one-shot, ignores/skips history entirely
+ask -ClearHistory              # wipe the thread, don't ask anything
+```
 
 ---
 

@@ -34,6 +34,17 @@
     Persist a new default model to ~/.config/ask/config.json, then exit.
     Example: ask -SetModel qwen2.5-coder:7b
 
+.PARAMETER NewChat
+    Clear conversation history before asking, then start a fresh thread
+    with this question.
+
+.PARAMETER NoHistory
+    Ask this one question without reading or writing conversation
+    history at all -- a true one-shot, ignoring any existing thread.
+
+.PARAMETER ClearHistory
+    Wipe conversation history and exit without asking anything.
+
 .EXAMPLE
     ask what is 1+2
     ask explain CRTP in modern C++
@@ -54,7 +65,10 @@ param(
     [switch] $NoStream,
     [switch] $Pretty = $true,
     [switch] $NoColor,
-    [string] $SetModel    = ""
+    [string] $SetModel    = "",
+    [switch] $NewChat,
+    [switch] $NoHistory,
+    [switch] $ClearHistory
 )
 
 $ErrorActionPreference = "Stop"
@@ -157,6 +171,45 @@ if (Test-Path $configPath) {
     }
 }
 
+# ── Conversation history (~/.ask_conversation_state.json) ─────────────────────
+# A flat list of {role, content} turns, most recent last. Capped to the last
+# $maxHistoryTurns exchanges (user+assistant pairs) so context doesn't grow
+# forever. -NoHistory skips reading/writing this entirely; -NewChat clears it
+# before this question; -ClearHistory clears it and exits.
+
+$historyPath     = Join-Path $HOME ".ask_conversation_state.json"
+$maxHistoryTurns = 20   # exchanges, i.e. 40 messages
+
+function Get-AskHistory {
+    if (-not (Test-Path $historyPath)) { return @() }
+    try {
+        $raw = Get-Content $historyPath -Raw | ConvertFrom-Json
+        if ($null -eq $raw) { return @() }
+        return @($raw)
+    } catch {
+        Write-Warning "Could not parse ${historyPath}, starting fresh: $_"
+        return @()
+    }
+}
+
+function Set-AskHistory([array]$turns) {
+    $maxMessages = $maxHistoryTurns * 2
+    if ($turns.Count -gt $maxMessages) {
+        $turns = $turns[($turns.Count - $maxMessages)..($turns.Count - 1)]
+    }
+    $turns | ConvertTo-Json -Depth 5 | Set-Content $historyPath
+}
+
+if ($ClearHistory) {
+    Set-Content $historyPath "[]"
+    Write-Host "Conversation history cleared ($historyPath)" -ForegroundColor Green
+    return
+}
+
+if ($NewChat) {
+    Set-Content $historyPath "[]"
+}
+
 # ── Handle -SetModel ──────────────────────────────────────────────────────────
 
 if ($SetModel -ne "") {
@@ -210,10 +263,15 @@ $url = if ($useChat) { "$baseUrl/api/chat" } else { "$baseUrl/api/generate" }
 
 $questionText = $Question -join " "
 
+$priorTurns = if ($NoHistory) { @() } else { Get-AskHistory }
+
 if ($useChat) {
     $messages = @()
     if ($effectiveSystem -ne "") {
         $messages += @{ role = "system"; content = $effectiveSystem }
+    }
+    foreach ($turn in $priorTurns) {
+        $messages += @{ role = $turn.role; content = $turn.content }
     }
     $messages += @{ role = "user"; content = $questionText }
     $body = @{
@@ -222,7 +280,15 @@ if ($useChat) {
         stream   = -not $NoStream.IsPresent
     } | ConvertTo-Json -Depth 5 -Compress
 } else {
-    $prompt = if ($effectiveSystem -ne "") { "$effectiveSystem`n$questionText" } else { $questionText }
+    $historyText = ($priorTurns | ForEach-Object {
+        $label = if ($_.role -eq "assistant") { "Assistant" } else { "User" }
+        "${label}: $($_.content)"
+    }) -join "`n"
+    $promptParts = @()
+    if ($effectiveSystem -ne "") { $promptParts += $effectiveSystem }
+    if ($historyText -ne "")     { $promptParts += $historyText }
+    $promptParts += $questionText
+    $prompt = $promptParts -join "`n"
     $body = @{
         model  = $effectiveModel
         prompt = $prompt
@@ -291,13 +357,22 @@ try {
             $obj = $line | ConvertFrom-Json -ErrorAction SilentlyContinue
             if (-not $obj) { continue }
             $token = if ($null -ne $obj.PSObject.Properties["message"]) { $obj.message.content } else { $obj.response }
-            if ($token) { Write-Host -NoNewline $token }
+            if ($token) { [void]$collected.Append($token); Write-Host -NoNewline $token }
             if ($obj.done -eq $true) { Write-Host ""; break }
         }
+        $fullText = $collected.ToString()
     }
 
     $reader.Close()
     $response.Close()
+
+    if (-not $NoHistory) {
+        $updated = @($priorTurns) + @(
+            @{ role = "user";      content = $questionText },
+            @{ role = "assistant"; content = $fullText }
+        )
+        Set-AskHistory $updated
+    }
 } catch [System.Net.WebException] {
     Write-Error "Stream read failed: $($_.Exception.Message)"
     exit 1
